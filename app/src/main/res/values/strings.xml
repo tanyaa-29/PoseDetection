@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Yoga Image Pose</string>
+    <string name="gallery">Gallery</string>
+    <string name="camera">Camera</string>
+    <string name="setting_camera">Setting_Camera</string>
+    <string name="set_logo">set_logo</string>
+    <string name="set_camera_logo">set_camera_logo</string>
+    <string name="bg_image">bg_image</string>
+    <string name="close_button">close_button</string>
+</resources>

@@ -5,65 +5,146 @@ import android.annotation.SuppressLint
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Matrix
+import android.graphics.*
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
 import android.widget.ImageView
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.ActivityResultCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
+import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.pose.Pose
+import com.google.mlkit.vision.pose.PoseDetection
+import com.google.mlkit.vision.pose.PoseLandmark
+import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions
 import java.io.IOException
-import androidx.cardview.widget.CardView
-
 
 class MainActivity : AppCompatActivity() {
 
+    private var galleryCard: CardView? = null
+    private var cameraCard: CardView? = null
+    private var imageView: ImageView? = null
+    private var closeButtonCard: CardView? = null
+    private var uri: Uri? = null
+    private val permissionCode = 100
 
-    var galleryCard: CardView? = null
-    var cameraCard: CardView? = null
-    var imageView: ImageView? = null
-    var uri: Uri? = null
-    val permissionCode = 100
-
+    // Accurate pose detector for static images
+    private val options = AccuratePoseDetectorOptions.Builder()
+        .setDetectorMode(AccuratePoseDetectorOptions.SINGLE_IMAGE_MODE)
+        .build()
+    private val poseDetector = PoseDetection.getClient(options)
 
     @RequiresApi(Build.VERSION_CODES.O)
     private val galleryActivityResultLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-        ActivityResultCallback { result ->
-            if (result.resultCode == RESULT_OK) {
-                uri = result.data!!.data
-                val inputImage = uriToBitmap(uri!!)
-                val rotated = rotateBitmap(inputImage)
-                imageView!!.setImageBitmap(rotated)
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            uri = result.data?.data
+            val inputImage = uri?.let { uriToBitmap(it) }
+            inputImage?.let {
+                val rotated = rotateBitmap(it)
+                imageView?.setImageBitmap(rotated)
+                closeButtonCard?.visibility = View.VISIBLE
+                performPoseDetection(rotated)
             }
-        })
+        }
+    }
 
-    // Camera Activity Result
     private val cameraActivityResultLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-        ActivityResultCallback { result ->
-            if (result.resultCode == RESULT_OK) {
-                val inputImage = uriToBitmap(uri!!)
-                val rotated = rotateBitmap(inputImage)
-                imageView!!.setImageBitmap(rotated)
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val inputImage = uri?.let { uriToBitmap(it) }
+            inputImage?.let {
+                val rotated = rotateBitmap(it)
+                imageView?.setImageBitmap(rotated)
+                closeButtonCard?.visibility = View.VISIBLE
+                performPoseDetection(rotated)
             }
-        })
+        }
+    }
+
+    private fun performPoseDetection(inputBmp: Bitmap) {
+        val image = InputImage.fromBitmap(inputBmp, 0)
+        poseDetector.process(image)
+            .addOnSuccessListener { results ->
+                Log.d("pose", "Landmarks count: ${results.allPoseLandmarks.size}")
+                drawPose(inputBmp, results)
+            }
+            .addOnFailureListener { e ->
+                e.printStackTrace()
+                Log.e("pose", "Detection failed: ${e.localizedMessage}")
+            }
+    }
+
+    private fun drawPose(bitmap: Bitmap, pose: Pose) {
+        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(mutableBitmap)
+
+        val dotPaint = Paint().apply {
+            color = Color.RED
+            style = Paint.Style.FILL
+            strokeWidth = 2f
+        }
+
+        val linePaint = Paint().apply {
+            color = Color.GREEN
+            strokeWidth = 3f
+            style = Paint.Style.STROKE
+        }
+
+        // Draw joints
+        pose.allPoseLandmarks.forEach {
+            canvas.drawCircle(it.position.x, it.position.y, 6f, dotPaint)
+        }
+
+        // Connect landmarks
+        fun connect(start: Int, end: Int) {
+            val startLandmark = pose.getPoseLandmark(start)
+            val endLandmark = pose.getPoseLandmark(end)
+            if (startLandmark != null && endLandmark != null) {
+                canvas.drawLine(
+                    startLandmark.position.x,
+                    startLandmark.position.y,
+                    endLandmark.position.x,
+                    endLandmark.position.y,
+                    linePaint
+                )
+            }
+        }
+
+        // Draw all connections
+        connect(PoseLandmark.LEFT_SHOULDER, PoseLandmark.RIGHT_SHOULDER)
+        connect(PoseLandmark.LEFT_SHOULDER, PoseLandmark.LEFT_ELBOW)
+        connect(PoseLandmark.LEFT_ELBOW, PoseLandmark.LEFT_WRIST)
+        connect(PoseLandmark.RIGHT_SHOULDER, PoseLandmark.RIGHT_ELBOW)
+        connect(PoseLandmark.RIGHT_ELBOW, PoseLandmark.RIGHT_WRIST)
+        connect(PoseLandmark.LEFT_SHOULDER, PoseLandmark.LEFT_HIP)
+        connect(PoseLandmark.RIGHT_SHOULDER, PoseLandmark.RIGHT_HIP)
+        connect(PoseLandmark.LEFT_HIP, PoseLandmark.RIGHT_HIP)
+        connect(PoseLandmark.LEFT_HIP, PoseLandmark.LEFT_KNEE)
+        connect(PoseLandmark.LEFT_KNEE, PoseLandmark.LEFT_ANKLE)
+        connect(PoseLandmark.RIGHT_HIP, PoseLandmark.RIGHT_KNEE)
+        connect(PoseLandmark.RIGHT_KNEE, PoseLandmark.RIGHT_ANKLE)
+
+        imageView?.setImageBitmap(mutableBitmap)
+    }
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
+
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
@@ -74,18 +155,24 @@ class MainActivity : AppCompatActivity() {
         galleryCard = findViewById(R.id.galleryCard)
         cameraCard = findViewById(R.id.cameraCard)
         imageView = findViewById(R.id.imageView)
+        closeButtonCard = findViewById(R.id.closeButtonCard)
 
-        // Check and request permissions
+        // Initially hide the close button
+        closeButtonCard?.visibility = View.GONE
+
+        // Set up close button click listener
+        closeButtonCard?.setOnClickListener {
+            resetImage()
+        }
+
         checkAndRequestPermissions()
 
-        // Pick from gallery
-        galleryCard!!.setOnClickListener {
-            val galleryIntent =
-                Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+        galleryCard?.setOnClickListener {
+            val galleryIntent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
             galleryActivityResultLauncher.launch(galleryIntent)
         }
-        // Capture from camera
-        cameraCard!!.setOnClickListener {
+
+        cameraCard?.setOnClickListener {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED
             ) {
@@ -96,6 +183,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun resetImage() {
+        imageView?.setImageResource(R.drawable.bg)
+        closeButtonCard?.visibility = View.GONE
+        uri = null
+    }
+
     private fun checkAndRequestPermissions() {
         val permissionsToRequest = mutableListOf<String>()
 
@@ -104,7 +197,7 @@ class MainActivity : AppCompatActivity() {
         ) {
             permissionsToRequest.add(Manifest.permission.CAMERA)
         }
-        // Android 13+ requires READ_MEDIA_IMAGES instead of READ_EXTERNAL_STORAGE
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) !=
                 PackageManager.PERMISSION_GRANTED
@@ -125,22 +218,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openCamera() {
-        val values = ContentValues()
-        values.put(MediaStore.Images.Media.TITLE, "New Picture")
-        values.put(MediaStore.Images.Media.DESCRIPTION, "From the Camera")
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.TITLE, "New Picture")
+            put(MediaStore.Images.Media.DESCRIPTION, "From the Camera")
+        }
         uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
+        val cameraIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+        }
         cameraActivityResultLauncher.launch(cameraIntent)
     }
 
     private fun uriToBitmap(selectedFileUri: Uri): Bitmap? {
         return try {
-            val parcelFileDescriptor = contentResolver.openFileDescriptor(selectedFileUri, "r")
-            val fileDescriptor = parcelFileDescriptor!!.fileDescriptor
-            val image = BitmapFactory.decodeFileDescriptor(fileDescriptor)
-            parcelFileDescriptor.close()
-            image
+            contentResolver.openFileDescriptor(selectedFileUri, "r")?.use { parcelFileDescriptor ->
+                val fileDescriptor = parcelFileDescriptor.fileDescriptor
+                BitmapFactory.decodeFileDescriptor(fileDescriptor)
+            }
         } catch (e: IOException) {
             e.printStackTrace()
             null
@@ -148,25 +242,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("Range")
-    fun rotateBitmap(input: Bitmap?): Bitmap {
+    fun rotateBitmap(input: Bitmap): Bitmap {
         val orientationColumn = arrayOf(MediaStore.Images.Media.ORIENTATION)
-        val cur = contentResolver.query(uri!!, orientationColumn, null, null, null)
-        var orientation = -1
-        if (cur != null && cur.moveToFirst()) {
-            orientation = cur.getInt(cur.getColumnIndex(orientationColumn[0]))
-            cur.close()
+        var orientation = 0
+        uri?.let {
+            contentResolver.query(it, orientationColumn, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    orientation = cursor.getInt(cursor.getColumnIndex(orientationColumn[0]))
+                }
+            }
         }
-        Log.d("tryOrientation", orientation.toString() + "")
+        Log.d("Orientation", orientation.toString())
         val rotationMatrix = Matrix()
         rotationMatrix.setRotate(orientation.toFloat())
-        return Bitmap.createBitmap(
-            input!!,
-            0,
-            0,
-            input.width,
-            input.height,
-            rotationMatrix,
-            true
-        )
+        return Bitmap.createBitmap(input, 0, 0, input.width, input.height, rotationMatrix, true)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        poseDetector.close()
     }
 }
